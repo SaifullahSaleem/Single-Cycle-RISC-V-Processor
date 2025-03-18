@@ -1,0 +1,503 @@
+
+module final_code(
+input clk, reset,
+output [31:0] pc,           
+output [31:0] insn,        
+output [31:0] imm_out,     
+output [2:0] alu_control,  
+output [31:0] reg_out1,    
+output [31:0] reg_out2,  
+output [31:0] alu_result, 
+output [31:0] read_data,
+output [31:0] add4_out, imm_add_out,
+output [7:0] control_out,   
+output [4:0] rs1_ouput, rs2_ouput, rd_ouput,
+output [2:0] funct3_out,
+output [6:0] funct7_out);
+
+wire [31:0] pc_in, pc_out;
+wire [31:0] adder4_out;
+wire [31:0] inst_out;
+wire [11:0] dec_imm_out_wire;
+wire [31:0] imm_out_wire;
+wire [31:0] imm_adder_out;
+wire branch, mem_read,mem_to_reg,mem_write,alu_src,reg_write;
+wire [1:0] ALU_op;
+wire [31:0] write_data, regout1, regout2;
+wire [2:0] funct3;
+wire [6:0] funct7;
+wire [4:0] rs1, rs2, rd;
+wire [2:0] Operation;
+wire [31:0] ALU_in2;
+wire [31:0] ALU_Result;
+wire zero_flag;
+wire and_out;
+wire [31:0] data_mem_out;
+
+Program_Counter PC(clk, reset, pc_in, pc_out);
+Adder Adder4(pc_out, 32'd4, adder4_out);
+Adder Adder1(pc_out, imm_out_wire, imm_adder_out);
+Mux mux1(adder4_out, imm_adder_out, and_out, pc_in);
+INST_MEM Mem(pc_out, reset, inst_out);
+Control_Unit ctrl(inst_out[6:0], branch, mem_read,mem_to_reg,mem_write,alu_src,reg_write, ALU_op);
+Register_File Reg_File(clk, reg_write,write_data,rs1,rs2,rd,regout1,regout2,reset);
+Decoder D(inst_out, funct3, funct7, rs1, rs2, rd, dec_imm_out_wire);
+ALU_Control_Unit alu_ctrl( ALU_op, funct7[5], funct3, Operation);
+Mux mux2(regout2, imm_out_wire, alu_src, ALU_in2);
+ALU alu1(regout1, ALU_in2, ALU_Result, Operation, zero_flag);
+And_Gate a1(branch, zero_flag, and_out);
+data_mem dm(mem_read, mem_write, ALU_Result, regout2, data_mem_out);
+Mux mux3(ALU_Result, data_mem_out, mem_to_reg, write_data);
+Imm_Gen ig(inst_out, imm_out_wire);
+
+assign pc = pc_out;
+assign insn = inst_out; 
+assign imm_out = imm_out_wire;
+assign alu_control = Operation;
+assign reg_out1 = regout1;
+assign reg_out2 = regout2;
+assign alu_result = ALU_Result;
+assign read_data = data_mem_out;
+assign rs1_ouput = rs1;
+assign rs2_ouput = rs2;
+assign rd_ouput = rd;
+assign funct7_out = funct7;
+assign funct3_out = funct3;
+assign control_out = {branch, mem_read,mem_to_reg,mem_write,alu_src,reg_write, ALU_op};
+assign add4_out = adder4_out;
+assign imm_add_out = imm_adder_out;
+
+endmodule
+
+// PC
+module Program_Counter (
+    input clk,
+    input reset,
+    input [31:0] PC_in,
+	 output reg [31:0] PC_out
+);
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            PC_out <= 32'b0;
+        end else begin
+            PC_out <= PC_in;
+        end
+    end
+
+endmodule
+
+
+
+// And Gate
+module And_Gate(
+input a, b,
+output y);
+
+assign y = a&b;
+endmodule
+
+
+// Decoder 
+
+module Decoder (instruction,func3,func7,rs1,rs2,rd,imm);
+input [31:0] instruction;   //instruction from instruction memory
+output reg [2:0] func3;     
+output reg [6:0] func7;  
+output reg [4:0] rs1,rs2,rd; //read_reg1,read_reg2,write_reg
+output reg [11:0] imm;
+
+parameter r_type = 7'b0110011;//add,sub,and,or
+parameter s_type = 7'b0100011;//sw
+parameter l_type = 7'b0000011;//lw
+parameter b_type = 7'b1100011;//beq 
+wire [6:0] opcode = instruction;
+always @(*) begin
+    case(opcode)
+    r_type:
+    begin
+        rd = instruction[11:7];
+        func3 = instruction[14:12];
+        rs1 = instruction[19:15];
+        rs2 = instruction[24:20];
+        func7 = instruction[31:25];
+    end
+    s_type:
+    begin
+        imm[4:0] = instruction[11:7];
+        func3 = instruction[14:12];
+        rs1 = instruction[19:15];
+        rs2 = instruction[24:20];
+        imm[11:5] = instruction[31:25];
+        rd = 5'bx;
+        func7 = 7'bx;
+		  end
+    l_type:
+    begin
+        rd = instruction[11:7];
+        func3 = instruction[14:12];
+        rs1 = instruction[19:15];
+        imm[11:0] = instruction[31:20];
+        func7 = 7'bx;
+		  end
+    b_type:
+    begin
+        imm[11] = instruction[7];
+        imm[4:1] = instruction[11:8];
+        func3 = instruction[14:12];
+        rs1 = instruction[19:15];
+        rs2 = instruction[24:20];
+        imm[10:5] = instruction[30:25];
+        imm[12] = instruction[31];
+        rd = 5'bx;
+        func7 = 7'bx;
+    end
+    endcase
+end
+
+endmodule
+
+// Adder 
+module Adder (
+    input [31:0] a,b,
+    output [31:0] sum
+);
+
+assign sum = a + b;
+
+endmodule
+
+
+// ALU
+
+module ALU (in1,in2,result,alu_control,zero_flag);
+input [31:0] in1,in2;
+input[2:0] alu_control;
+output reg [31:0] result;
+output reg zero_flag;
+
+always @(*) begin
+        case(alu_control)
+
+            3'b000: result = in1&in2; //AND
+            3'b001: result = in1|in2; //OR
+            3'b010: result = in1+in2; //Add
+            3'b110: result = in1-in2; //Sub
+            3'b011:                   //A==B
+            begin 
+                if(in1==in2)
+                    result = 32'b0;
+                else
+                    result = 32'bx;
+            end
+        endcase
+
+        // Setting Zero_flag if ALU_result is zero
+        if (result == 32'b0)
+            zero_flag = 1'b1;
+        else
+            zero_flag = 1'b0;
+end
+    
+endmodule 
+
+
+// Register File
+module Register_File (clk,reg_write,write_data,rs1,rs2,rd,out1,out2,reset);
+input clk,reset; 
+input reg_write;    
+input [31:0] write_data; 
+input [4:0] rs1,rs2,rd;  
+output [31:0] out1,out2;
+
+reg [31:0] Reg [31:0];
+
+initial begin
+	Reg[1]=5;
+	Reg[2]=6;
+	Reg[3]=7;
+	Reg[4]=2;	
+	Reg[5]=3;
+	Reg[6]=1;	
+	Reg[7]=0;
+	Reg[8]=9;
+	Reg[9]=23;
+	Reg[10]=11;
+
+	Reg[11]=5;
+	Reg[12]=6;
+	Reg[13]=7;
+	Reg[14]=2;	
+	Reg[15]=3;
+	Reg[16]=1;	
+	Reg[17]=0;
+	Reg[18]=32;
+	Reg[19]=15;
+	Reg[20]=11;
+	
+	Reg[21]=5;
+	Reg[22]=6;
+	Reg[23]=7;
+	Reg[24]=2;	
+	Reg[25]=3;
+	Reg[26]=1;	
+	Reg[27]=0;
+	Reg[28]=7;
+	Reg[29]=6;
+	Reg[30]=17;
+	Reg[31]=31;
+end
+
+always @(posedge clk) begin
+    //Reg[0] is hardcoded 0
+	Reg[0]=0;
+
+    //Logic
+    if(reg_write) 	//write to rd
+		Reg[rd] = write_data;
+end
+
+
+//read rs1,rs2
+assign out1 = Reg[rs1];
+assign out2 = Reg[rs2];
+
+endmodule
+
+
+// Data Memory 
+
+module data_mem (mem_read,mem_write,address,data_in,data_out);
+input mem_read;         //control to read data
+input mem_write;        //control to write data
+input [31:0] address;   //address to read/write 
+input [31:0] data_in;   //input data for write
+output reg [31:0] data_out; //output data for read
+
+reg [7:0] memory [1023:0];
+
+always @(*) begin
+
+        if(mem_write)
+        begin
+            memory[address] = data_in[7:0];
+            memory[address+1] = data_in[15:8];
+            memory[address+2] = data_in[23:16];
+            memory[address+3] = data_in[31:24];
+        end
+
+        if(mem_read)
+        begin
+            data_out[7:0] = memory[address];
+            data_out[15:8] = memory[address+1]; 
+            data_out[23:16] = memory[address+2]; 
+            data_out[31:24] = memory[address+3];
+        end
+
+
+end
+
+endmodule
+
+
+// Imm Gen
+
+module Imm_Gen(
+    input [31:0] instruction,
+    output reg [31:0] immediate_output
+);
+
+parameter [6:0] LOAD_OPCODE = 7'b0000011;
+parameter [6:0] STORE_OPCODE = 7'b0100011; 
+parameter [6:0] BRANCH_OPCODE = 7'b1100011;
+
+wire [6:0] opcode = instruction[6:0];
+
+wire [11:0] load_im = instruction[31:20];
+wire [11:0] store_im = {instruction[31:25],instruction[11:7]};
+wire [12:1] branch_im = {instruction[31], instruction[7], instruction[30:25], instruction[11:8]};
+      
+always @(*) begin
+    case(opcode)
+        	LOAD_OPCODE: immediate_output = { {20{load_im[11]}} , load_im};
+			STORE_OPCODE: immediate_output = { {20{store_im[11]}} , store_im};
+			BRANCH_OPCODE: immediate_output = 2*{{20{branch_im[12]}} , branch_im}; // left shift 
+			default: immediate_output = 32'b0;
+    endcase
+end
+
+endmodule
+
+
+// Mux
+
+module Mux(
+input [31:0] a, b,
+input s,
+output reg [31:0] y);
+
+always @ (*)
+begin 
+if (s==0)
+	y = a;
+else 
+	y = b;
+end
+endmodule
+
+
+// ALU Control Unit
+
+module ALU_Control_Unit(
+input [1:0] ALU_Op,
+input Funct7,
+input [2:0] Funct3,
+output reg [2:0] Operation
+);
+
+always @ (*)
+	begin
+		casex({ALU_Op, Funct7, Funct3})
+		6'b1X0000: Operation = 3'b010;
+		6'b1X1000: Operation = 3'b110;
+		6'b1X0111: Operation = 3'b000;
+		6'b1X0110: Operation = 3'b001;
+		6'b00XXXX: Operation = 3'b010;
+		6'bX1XXXX: Operation = 3'b110;
+		default: Operation = 3'bXXX;
+		endcase
+	end
+endmodule
+
+
+// Control Unit
+
+module Control_Unit(
+input [6:0] opcode,         //opcode from instruction
+output reg branch,mem_read,mem_to_reg,mem_write,alu_src,reg_write, //control signals
+output reg [1:0] ALU_op);//control signal
+
+parameter r_type = 7'b0110011;//add,sub,and,or
+parameter l_type = 7'b0000011;//lw
+parameter s_type = 7'b0100011;//sw
+parameter b_type = 7'b1100011;//beq
+
+always @(*) begin
+    case(opcode)
+    r_type:
+    begin
+        alu_src = 0;
+        mem_to_reg = 0;
+        reg_write = 1;
+        mem_read = 0;
+        mem_write = 0;
+        branch = 0;
+		  ALU_op = 2'b10;
+	end
+
+    l_type:
+    begin
+        alu_src = 1;
+        mem_to_reg = 1;
+        reg_write = 1;
+        mem_read = 1;
+        mem_write = 0;
+        branch = 0;
+		  ALU_op = 2'b00;
+	end
+	
+    s_type:
+    begin
+        alu_src = 1;
+        mem_to_reg = 1'bx;
+        reg_write = 0;
+        mem_read = 0;
+        mem_write = 1;
+        branch = 0;
+		  ALU_op = 2'b00;
+	end
+
+    b_type:
+    begin
+        alu_src = 0;
+        mem_to_reg = 1'bx;
+        reg_write = 0;
+        mem_read = 0;
+        mem_write = 0;
+        branch = 1;
+		  ALU_op = 2'b01;
+	end
+    endcase
+end
+endmodule
+
+
+// Instruction Memory
+
+module INST_MEM(
+    input [31:0] PC,
+    input reset,
+    output [31:0] Instruction_Code
+);
+    reg [7:0] Memory [31:0]; // Byte addressable memory with 32 locations
+
+    assign Instruction_Code = {Memory[PC+3],Memory[PC+2],Memory[PC+1],Memory[PC]};
+
+    always @(reset)
+    begin
+        if(reset == 1)
+        begin 
+
+				// add x3 x2 x1
+            Memory[3] = 8'h00;
+				Memory[2] = 8'h11;
+				Memory[1] = 8'h01;
+				Memory[0] = 8'hb3;
+				
+				// add x6 x5 x4
+            // 32'h00428333;
+				Memory[7] = 8'h00;
+				Memory[6] = 8'h42;
+				Memory[5] = 8'h83;
+				Memory[4] = 8'h33;
+				
+				// 32'h40a58633	sub x12 x11 x10
+				Memory[11] = 8'h40;
+				Memory[10] = 8'ha5;
+				Memory[9] = 8'h86;
+				Memory[8] = 8'h33;
+				
+//				32'h0042f833	and x16 x5 x4	and x16 x5 x4
+				Memory[15] = 8'h00;
+				Memory[14] = 8'h42;
+				Memory[13] = 8'hf8;
+				Memory[12] = 8'h33;
+				
+//				32'h0042e8b3	or x17 x5 x4
+				Memory[19] = 8'h00;
+				Memory[18] = 8'h42;
+				Memory[17] = 8'he8;
+				Memory[16] = 8'hb3;
+			
+//				32'h3e112423; // sw x1 1000(x2)
+				Memory[23] = 8'h3e;
+				Memory[22] = 8'h11;
+				Memory[21] = 8'h24;
+				Memory[20] = 8'h23;
+				
+//				32'h3e812503; // lw x10 1000(x2)
+				Memory[27] = 8'h3e;
+				Memory[26] = 8'h81;
+				Memory[25] = 8'h25;
+				Memory[24] = 8'h03;
+
+// 				32'hfea50ce3	beq x10 x10 -8
+				Memory[31] = 8'hfe;
+				Memory[30] = 8'ha5;
+				Memory[29] = 8'h0c;
+				Memory[28] = 8'he3;
+
+        end
+    end
+
+endmodule
